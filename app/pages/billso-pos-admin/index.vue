@@ -19,18 +19,25 @@ const ICONS = {
   check: '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>',
   zap: '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>',
   settings: '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>',
-  sun: '<svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/></svg>'
+  sun: '<svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/></svg>',
+  orders: '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z"/></svg>'
 }
 
 // ── State ─────────────────────────────────────────────────────
 const ready = ref(false)
 const authenticated = ref(false)
 const authUser = ref<any>(null)
-const activeTab = ref<'dashboard' | 'users' | 'payments' | 'plans' | 'notifications'>('dashboard')
+const activeTab = ref<'dashboard' | 'users' | 'payments' | 'plans' | 'notifications' | 'orders'>('dashboard')
 
 const users = ref<any[]>([])
 const payments = ref<any[]>([])
 const plans = ref<any[]>([])
+const orders = ref<any[]>([])
+
+const orderSearch = ref('')
+const orderFilter = ref<'all' | 'pending' | 'completed' | 'cancelled'>('all')
+const selectedOrder = ref<any>(null)
+
 const subSettings = ref({ 
   default_plan_id: '', 
   temporary_plan_id: '', 
@@ -57,6 +64,7 @@ let unsubUsers: (() => void) | null = null
 let unsubPayments: (() => void) | null = null
 let unsubPlans: (() => void) | null = null
 let unsubSettings: (() => void) | null = null
+let unsubOrders: (() => void) | null = null
 
 // ── Computed ──────────────────────────────────────────────────
 const filteredUsers = computed(() => {
@@ -83,6 +91,33 @@ const totalRevenue = computed(() =>
     .reduce((acc, p) => acc + (parseFloat(p.amount) || 0), 0)
 )
 const paidUsers = computed(() => users.value.filter(u => u.subscription?.plan && u.subscription.plan !== 'trial').length)
+
+const filteredOrders = computed(() => {
+  let list = orders.value
+  
+  // Status filter
+  if (orderFilter.value !== 'all') {
+    list = list.filter(o => o.status === orderFilter.value)
+  }
+  
+  // Text search
+  if (orderSearch.value.trim()) {
+    const s = orderSearch.value.toLowerCase()
+    list = list.filter(o => 
+      o.id.toLowerCase().includes(s) ||
+      (o.shop_name ?? '').toLowerCase().includes(s) ||
+      (o.customer_name ?? '').toLowerCase().includes(s) ||
+      (o.name ?? '').toLowerCase().includes(s) ||
+      (o.plan_name ?? '').toLowerCase().includes(s) ||
+      (o.plan ?? '').toLowerCase().includes(s) ||
+      (o.item ?? '').toLowerCase().includes(s) ||
+      (o.email ?? '').toLowerCase().includes(s) ||
+      (o.phone ?? '').includes(s)
+    )
+  }
+  
+  return list
+})
 
 // ── Auth ──────────────────────────────────────────────────────
 onMounted(() => {
@@ -115,6 +150,7 @@ onUnmounted(() => {
   unsubPayments?.()
   unsubPlans?.()
   unsubSettings?.()
+  unsubOrders?.()
 })
 
 // ── Listeners ─────────────────────────────────────────────────
@@ -158,6 +194,23 @@ const startListeners = () => {
       subSettings.value = { ...subSettings.value, ...d.data() }
     }
   })
+
+  // Orders
+  unsubOrders = onSnapshot(
+    collection($db, 'orders'),
+    snap => {
+      const list = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+      list.sort((a: any, b: any) => {
+        const da = a.created_at ? new Date(a.created_at).getTime() : (a.createdAt ? new Date(a.createdAt).getTime() : 0)
+        const db = b.created_at ? new Date(b.created_at).getTime() : (b.createdAt ? new Date(b.createdAt).getTime() : 0)
+        return db - da
+      })
+      orders.value = list
+    },
+    error => {
+      console.error("Error listening to orders collection: ", error)
+    }
+  )
 }
 
 // ── Actions ───────────────────────────────────────────────────
@@ -332,6 +385,36 @@ const statusBadge = (status?: string) => ({
   approved: 'bg-green-100 text-green-800',
   rejected: 'bg-red-100 text-red-800',
 })[status ?? ''] ?? 'bg-slate-100 text-slate-600'
+
+// ── Order Actions & Helpers ────────────────────────────────────
+const updateOrderStatus = async (orderId: string, newStatus: string) => {
+  try {
+    await updateDoc(doc($db, 'orders', orderId), {
+      status: newStatus
+    })
+    showToast(`✓ Order status updated to ${newStatus}`)
+  } catch (e: any) {
+    showToast('❌ Update status failed: ' + e.message, false)
+  }
+}
+
+const deleteOrder = async (orderId: string) => {
+  if (!confirm('Are you sure you want to permanently delete this order?')) return
+  try {
+    await deleteDoc(doc($db, 'orders', orderId))
+    showToast('🗑️ Order deleted successfully')
+  } catch (e: any) {
+    showToast('❌ Delete order failed: ' + e.message, false)
+  }
+}
+
+const orderStatusBadge = (status?: string) => ({
+  pending: 'bg-amber-100 text-amber-800',
+  processing: 'bg-blue-100 text-blue-800',
+  completed: 'bg-green-100 text-green-800',
+  cancelled: 'bg-red-100 text-red-800',
+  rejected: 'bg-red-100 text-red-800',
+})[status ?? ''] ?? 'bg-slate-100 text-slate-600'
 </script>
 
 <template>
@@ -378,6 +461,7 @@ const statusBadge = (status?: string) => ({
             { key: 'dashboard', icon: ICONS.dashboard, label: 'Dashboard' },
             { key: 'users',     icon: ICONS.users,     label: 'Users',    count: users.length },
             { key: 'payments',  icon: ICONS.payments,  label: 'Payments', count: pendingCount, danger: true },
+            { key: 'orders',    icon: ICONS.orders,    label: 'Orders',   count: orders.length },
             { key: 'plans',     icon: ICONS.plans,     label: 'Plans' },
             { key: 'notifications', icon: ICONS.notifications, label: 'Notifications' },
           ]"
@@ -428,7 +512,7 @@ const statusBadge = (status?: string) => ({
           
           <div>
             <h1 class="text-lg lg:text-xl font-extrabold text-slate-900">
-              {{ { dashboard: 'Dashboard', users: 'Users', payments: 'Payments', plans: 'Subscription Plans', notifications: 'App Notifications' }[activeTab] }}
+              {{ { dashboard: 'Dashboard', users: 'Users', payments: 'Payments', plans: 'Subscription Plans', notifications: 'App Notifications', orders: 'Orders List' }[activeTab] }}
             </h1>
             <p class="text-slate-400 text-[10px] lg:text-xs mt-0.5">Billso Admin · Live</p>
           </div>
@@ -450,10 +534,11 @@ const statusBadge = (status?: string) => ({
         <!-- ─────────── DASHBOARD ─────────────────────────── -->
         <div v-if="activeTab === 'dashboard'" class="space-y-6">
           <!-- Stat cards -->
-          <div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3 lg:gap-5">
+          <div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3 lg:gap-5">
             <div v-for="s in [
               { label: 'Total Revenue', value: '₹' + totalRevenue.toLocaleString('en-IN'), icon: ICONS.revenue, color: 'text-emerald-600', bg: 'bg-emerald-50' },
               { label: 'Total Users', value: users.length, icon: ICONS.users, color: 'text-blue-600', bg: 'bg-blue-50' },
+              { label: 'Total Orders', value: orders.length, icon: ICONS.orders, color: 'text-indigo-600', bg: 'bg-indigo-50' },
               { label: 'Pending Approvals', value: pendingCount, icon: ICONS.clock, color: 'text-amber-600', bg: 'bg-amber-50' },
               { label: 'Approved Payments', value: approvedCount, icon: ICONS.check, color: 'text-blue-600', bg: 'bg-blue-50' },
               { label: 'Paid Subscribers', value: paidUsers, icon: ICONS.zap, color: 'text-purple-600', bg: 'bg-purple-50' },
@@ -540,6 +625,47 @@ const statusBadge = (status?: string) => ({
                     <td class="px-6 py-4"><code class="bg-slate-100 text-slate-600 px-2 py-0.5 rounded text-xs font-mono">{{ u.business_id || '—' }}</code></td>
                     <td class="px-6 py-4"><span :class="['px-2.5 py-1 rounded-full text-xs font-bold capitalize', planBadge(u.subscription?.plan)]">{{ u.subscription?.plan || '—' }}</span></td>
                     <td class="px-6 py-4 text-slate-400 text-xs">{{ fmtDate(u.subscription?.expiry_date) }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Recent orders quick view -->
+          <div class="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
+            <div class="flex items-center justify-between px-6 py-4 border-b border-slate-100">
+              <h2 class="font-bold text-slate-800 flex items-center gap-2">
+                <span v-html="ICONS.orders" class="text-indigo-500 animate-pulse"></span>
+                Recent Orders
+              </h2>
+              <button @click="activeTab = 'orders'" class="text-xs text-blue-600 font-semibold hover:underline">View all →</button>
+            </div>
+            <div v-if="orders.length === 0" class="flex flex-col items-center justify-center py-12 text-slate-400 gap-3">
+              <span class="text-3xl">🛒</span>
+              <p class="text-xs">No orders recorded yet.</p>
+            </div>
+            <div v-else class="overflow-x-auto">
+              <table class="w-full text-sm">
+                <thead class="bg-slate-50 text-slate-500 text-xs uppercase tracking-wide">
+                  <tr>
+                    <th class="px-6 py-3 text-left font-semibold">Order ID</th>
+                    <th class="px-6 py-3 text-left font-semibold">Customer / Shop</th>
+                    <th class="px-6 py-3 text-left font-semibold">Plan / Item</th>
+                    <th class="px-6 py-3 text-left font-semibold">Amount</th>
+                    <th class="px-6 py-3 text-left font-semibold">Status</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-100">
+                  <tr v-for="o in orders.slice(0, 5)" :key="o.id" class="hover:bg-slate-50 transition">
+                    <td class="px-6 py-4 font-mono text-xs text-slate-500">#{{ o.id.slice(0, 8) }}</td>
+                    <td class="px-6 py-4 font-semibold text-slate-900">{{ o.shop_name || o.customer_name || o.name || '—' }}</td>
+                    <td class="px-6 py-4 text-slate-600">{{ o.plan_name || o.plan || o.item || '—' }}</td>
+                    <td class="px-6 py-4 font-bold text-slate-900">₹{{ o.amount || o.price || o.total || 0 }}</td>
+                    <td class="px-6 py-4">
+                      <span :class="['px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-tight', orderStatusBadge(o.status)]">
+                        {{ o.status || 'pending' }}
+                      </span>
+                    </td>
                   </tr>
                 </tbody>
               </table>
@@ -820,6 +946,161 @@ const statusBadge = (status?: string) => ({
                   </tr>
                 </tbody>
               </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- ─────────── ORDERS ────────────────────────────── -->
+        <div v-if="activeTab === 'orders'" class="space-y-6 animate-in fade-in duration-200">
+          <div class="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
+            <!-- Header & Search -->
+            <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 px-6 py-4 border-b border-slate-100">
+              <div class="flex items-center gap-3">
+                <h2 class="font-bold text-slate-800">All Orders ({{ filteredOrders.length }})</h2>
+                <!-- Filter Tabs -->
+                <div class="flex gap-1.5 ml-4 bg-slate-50 p-1 rounded-xl border border-slate-200">
+                  <button
+                    v-for="s in (['all','pending','processing','completed','cancelled'] as const)"
+                    :key="s"
+                    @click="orderFilter = s"
+                    :class="[
+                      'px-3 py-1 rounded-lg text-xs font-bold transition capitalize',
+                      orderFilter === s
+                        ? 'bg-blue-600 text-white shadow-sm'
+                        : 'text-slate-500 hover:text-slate-900'
+                    ]"
+                  >{{ s }}</button>
+                </div>
+              </div>
+              <div class="relative w-full md:w-72">
+                <span class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">🔍</span>
+                <input
+                  v-model="orderSearch"
+                  placeholder="Search orders..."
+                  class="w-full pl-9 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 transition"
+                />
+              </div>
+            </div>
+
+            <!-- Table -->
+            <div class="overflow-x-auto">
+              <table class="w-full text-sm">
+                <thead class="bg-slate-50 text-slate-500 text-xs uppercase tracking-wide border-b border-slate-100">
+                  <tr>
+                    <th class="px-6 py-3 text-left font-semibold">Order ID</th>
+                    <th class="px-6 py-3 text-left font-semibold">Shop / Customer</th>
+                    <th class="px-6 py-3 text-left font-semibold">Plan / Item</th>
+                    <th class="px-6 py-3 text-left font-semibold">Amount</th>
+                    <th class="px-6 py-3 text-left font-semibold">Date</th>
+                    <th class="px-6 py-3 text-left font-semibold">Status</th>
+                    <th class="px-6 py-3 text-right font-semibold">Actions</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-100">
+                  <tr v-if="filteredOrders.length === 0">
+                    <td colspan="7" class="text-center py-16 text-slate-400 text-sm">No orders found</td>
+                  </tr>
+                  <tr v-for="o in filteredOrders" :key="o.id" class="hover:bg-slate-50 transition">
+                    <!-- Order ID -->
+                    <td class="px-6 py-4">
+                      <div class="font-mono text-xs text-slate-600 bg-slate-50 px-2 py-1 rounded inline-block">#{{ o.id.slice(0, 10) }}</div>
+                    </td>
+                    <!-- Customer Details -->
+                    <td class="px-6 py-4">
+                      <div class="font-bold text-slate-900">{{ o.shop_name || o.customer_name || o.name || '—' }}</div>
+                      <div class="text-[10px] text-slate-400 font-medium mt-0.5" v-if="o.phone || o.email">
+                        {{ o.phone || '' }}<span v-if="o.phone && o.email"> · </span>{{ o.email || '' }}
+                      </div>
+                    </td>
+                    <!-- Plan / Description -->
+                    <td class="px-6 py-4">
+                      <span class="text-slate-700 font-semibold">{{ o.plan_name || o.plan || o.item || '—' }}</span>
+                      <div v-if="o.utr" class="text-[10px] text-slate-400 font-mono mt-0.5">UTR: {{ o.utr }}</div>
+                    </td>
+                    <!-- Price -->
+                    <td class="px-6 py-4 font-black text-slate-900">
+                      ₹{{ o.amount || o.price || o.total || 0 }}
+                    </td>
+                    <!-- Date -->
+                    <td class="px-6 py-4 text-slate-400 text-xs">
+                      {{ fmtDate(o.created_at || o.createdAt) }}
+                    </td>
+                    <!-- Status selector -->
+                    <td class="px-6 py-4">
+                      <select
+                        :value="o.status || 'pending'"
+                        @change="(e) => updateOrderStatus(o.id, (e.target as HTMLSelectElement).value)"
+                        :class="['px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-tight outline-none border border-slate-200 cursor-pointer', orderStatusBadge(o.status)]"
+                      >
+                        <option value="pending" class="bg-white text-slate-800">Pending</option>
+                        <option value="processing" class="bg-white text-slate-800">Processing</option>
+                        <option value="completed" class="bg-white text-slate-800">Completed</option>
+                        <option value="cancelled" class="bg-white text-slate-800">Cancelled</option>
+                      </select>
+                    </td>
+                    <!-- Actions -->
+                    <td class="px-6 py-4 text-right">
+                      <div class="flex justify-end items-center gap-2">
+                        <button
+                          @click="selectedOrder = o"
+                          class="px-2.5 py-1.5 border border-slate-200 hover:bg-slate-50 text-slate-600 rounded-lg text-xs font-semibold flex items-center gap-1 transition"
+                        >
+                          👁 Details
+                        </button>
+                        <button
+                          @click="deleteOrder(o.id)"
+                          class="p-1.5 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition"
+                          title="Delete Order"
+                        >
+                          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- ── Order Details Modal ── -->
+        <div v-if="selectedOrder" class="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+          <div class="bg-white rounded-3xl shadow-2xl w-full max-w-lg overflow-hidden animate-in fade-in zoom-in duration-200 border border-slate-200">
+            <div class="px-6 py-4 bg-slate-900 text-white flex justify-between items-center">
+              <div>
+                <h3 class="font-bold text-base flex items-center gap-2">
+                  <span>Order Inspection</span>
+                  <span class="text-xs bg-slate-800 text-slate-300 px-2 py-0.5 rounded font-mono">#{{ selectedOrder.id.slice(0, 12) }}</span>
+                </h3>
+                <p class="text-[10px] text-slate-400 mt-0.5">Dynamically rendering all properties from Firestore</p>
+              </div>
+              <button @click="selectedOrder = null" class="text-slate-400 hover:text-white transition">✕</button>
+            </div>
+            
+            <div class="p-6 space-y-4 max-h-[450px] overflow-y-auto">
+              <!-- Key Value Display -->
+              <div class="grid grid-cols-1 gap-3">
+                <div v-for="(val, key) in selectedOrder" :key="key" class="border-b border-slate-100 pb-2 flex flex-col sm:flex-row sm:justify-between sm:items-start gap-1">
+                  <span class="text-xs font-black text-slate-400 uppercase tracking-wider select-none">{{ key }}</span>
+                  <span class="text-sm font-semibold text-slate-800 break-all text-left sm:text-right">
+                    <span v-if="val === null || val === undefined" class="text-slate-300 italic">null</span>
+                    <span v-else-if="typeof val === 'object' && val.seconds !== undefined">
+                      <!-- Firebase Timestamp -->
+                      {{ new Date(val.seconds * 1000).toLocaleString('en-IN') }}
+                    </span>
+                    <span v-else-if="typeof val === 'object'">
+                      <pre class="bg-slate-50 text-[10px] p-2 rounded text-left overflow-x-auto max-w-full font-mono">{{ JSON.stringify(val, null, 2) }}</pre>
+                    </span>
+                    <span v-else>{{ val }}</span>
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <div class="px-6 py-4 bg-slate-50 flex justify-end gap-3 border-t border-slate-100">
+              <button @click="selectedOrder = null" class="px-5 py-2.5 bg-slate-900 text-white text-xs font-bold rounded-xl hover:bg-slate-800 transition">
+                Close Inspector
+              </button>
             </div>
           </div>
         </div>
